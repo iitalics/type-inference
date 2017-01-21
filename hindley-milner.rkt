@@ -1,29 +1,34 @@
 #lang racket
 
 
+(define (main)
+  (for ([e (in-list
+            (list
+             3                    ;; - 3 : Int
+             #t                   ;; - true : Bool
+             (lam 'x 'x)          ;; - <function> : (-> 'a 'a)
+             (lam* 'x 'y 'x)      ;; - <function> : (-> 'a (-> 'b 'a))
+             (app (lam 'x 'x)     ;; - 100 : Int
+                  100)
+             (app* '+ 5 7)        ;; - 12 : Int
+             (app* '< 5 7)        ;; - true : Bool
+             'nil                 ;; - [] : Listof('a)
+             (let-in 'f (lam 'x 'x) ;; - 3 : Int
+                     (app 'f 3))
+             (let-in 'f (lam 'x 'x) ;; - [3] : Listof(Int)
+                     (app* 'cons
+                           (app 'f 3)
+                           (app 'f 'nil)))
+             ))])
+    (displayln (typecheck/eval e))))
+
 (define (typecheck/eval e)
   (let* ([e+t (annotate e)]
          [t (typecheck e+t)]
          [v (evaluate e)])
-    (printf "- ~a : ~a\n"
+    (format "- ~a : ~a"
             (val->string v)
             (type->string t))))
-
-(define (main)
-  (typecheck/eval 3)
-  (typecheck/eval #t)
-  (typecheck/eval (lam 'x 'x))
-  (typecheck/eval (app (lam 'x 'x) 100))
-  (typecheck/eval (app* '+ 5 7))
-  (typecheck/eval (app* '< 5 7))
-  (typecheck/eval 'nil)
-  (typecheck/eval (let-in 'f (lam 'x 'x)
-                          (app 'f 3)))
-  (typecheck/eval (let-in 'f (lam 'x 'x)
-                          (app* 'cons
-                                (app 'f 3)
-                                (app 'f 'nil))))
-  )
 
 
 ;;;; Misc. functions ;;;;
@@ -170,6 +175,7 @@
 
 ;;; Note: by deriving from the untyped expression structs,
 ;;;  we don't have to write a new evaluator for typed expressions.
+;;; Edit: the above is not true because standard-env is not type annotated.
 ; Type application & Type lambdas:
 (struct t-app app () #:transparent)
 (struct t-lam lam () #:transparent)
