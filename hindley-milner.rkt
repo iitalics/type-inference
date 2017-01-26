@@ -298,15 +298,37 @@
     [((data d args1) (data d args2))
      (foldl unify S args1 args2)]
     ; variable
-    [((? variable? x) t) (cons (cons x t) S)]
-    [(t (? variable? x)) (cons (cons x t) S)]
+    [((? variable? x) t)
+     (check-occurs (subst-apply S t) x)
+     (cons (cons x t) S)]
+    [(t (? variable? x))
+     (check-occurs (subst-apply S t) x)
+     (cons (cons x t) S)]
     ; error
     [(_ _)
      (let ([los (types->strings (list (subst-apply S t1)
-                                     (subst-apply S t2)))])
-       (error (format "incompatible types: `~a' vs `~a'"
+                                      (subst-apply S t2)))])
+       (error (format "incompatible types: ~a vs ~a"
                       (first los)
                       (second los))))]))
+
+;;; Does variable `x' occur in type `t'?
+;; (occurs? [t : type?] [x : variable?]) -> boolean?
+(define (occurs? t x)
+  (match t
+    [(fun t1 t2) (or (occurs? t1 x)
+                     (occurs? t2 x))]
+    [(data d ts) (ormap (lambda (t) (occurs? t x)) ts)]
+    [(? variable? y) (variable=? x y)]))
+
+;;; Thow exception if `x' occurs in type `t' (to prevent infinite type).
+;; (check-occurs [t : type?] [x : variable?])
+(define (check-occurs t x)
+  (when (occurs? t x)
+    (let ([los (types->strings (list x t))])
+      (error (format "occurs check failed (infinite type): ~a := ~a"
+                     (first los)
+                     (second los))))))
 
 ;;; Type inference algorithm; infers the type, annotates the
 ;;;  expression, and gives a list of constraints to be fulfilled.
@@ -424,7 +446,8 @@
        [(forall x scma)
         (subst-apply (list (cons x arg)) scma)]
        [t
-        (error (format "invalid type application on non-generic type `~a'" t))])]
+        (error (format "invalid type application on non-generic type `~a'"
+                       (type->string t)))])]
     [(t-lam x body)
      (forall x (typecheck body ctx))]
     [(app fn arg)
@@ -433,7 +456,7 @@
         (let ([giv-arg/t (typecheck arg ctx)])
           (when (not (equal? exp-arg/t giv-arg/t))
             (let ([los (types->strings (list exp-arg/t giv-arg/t))])
-              (error (format "expected argument of type `~a', got `~a'"
+              (error (format "expected argument of type ~a, got ~a"
                              (first los)
                              (second los)))))
           ret/t)]
