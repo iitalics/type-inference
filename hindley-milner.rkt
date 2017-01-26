@@ -207,8 +207,6 @@
     (subst-apply/expr+t S e+t)))
 
 ;;; Substitutions
-;;; Note: Newer substitutions appear before older substitutions.
-;;;  e.g. (free-vars (cdar S)) and (map car S) are disjoint.
 (define subst?
   (listof (cons/c variable? type?)))
 
