@@ -127,16 +127,18 @@
                      (unless (equal? arg-t
                                      (syntax->datum #'exp-arg-t))
                        (raise-syntax-error
-                        #'arg (format "expected type ~s, got ~s"
-                                      (syntax->datum #'exp-arg-t)
-                                      arg-t)
+                        'application
+                        (format "expected type ~s, got ~s"
+                                (syntax->datum #'exp-arg-t)
+                                arg-t)
                         #'arg))
                      (with-syntax ([arg- arg-])
                        (k-out #'(_ ret-t
                                    (#%app fn- arg-))))]
                     [(_ t fn-)
                      (raise-syntax-error
-                      #'fn "calling value that is not a function"
+                      'application
+                      "calling value that is not a function"
                       #'fn)]))]
           [arg-k (syntax-parser
                    [(_ arg-t arg-)
