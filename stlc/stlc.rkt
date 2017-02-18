@@ -4,7 +4,8 @@
           [lang/app #%app]
           [lang/datum #%datum]
           [lang/top #%top]
-          [lang/lambda lambda]))
+          [lang/lambda lambda]
+          [lang/repl #%top-interaction]))
 (require racket/stxparam
          (for-syntax syntax/parse
                      (only-in racket/match match)
@@ -19,6 +20,17 @@
                 (lang/get-type form)
                 (lang/get-expanded form)) ...)]))
 
+(define-syntax lang/repl
+  (syntax-parser
+    [(_ . e)
+     (with-syntax
+       ([k (syntax-parser
+             [(_ ty e-)
+              #'(begin (printf "- ~a : ~a\n" 'e- 'ty)
+                       (displayln e-))])])
+       #'(syntax-parameterize ([typing-cont k])
+           e))]))
+
 
 ;;; typing context ;;;
 
@@ -26,15 +38,6 @@
   typing-context
   '())
 
-(define-syntax with-extend-context
-  (syntax-parser
-    #:datum-literals (= :)
-    [(_ ([x : ty = e] ...) body ...)
-     (with-syntax ([ctx (syntax-parameter-value #'typing-context)])
-       #'(syntax-parameterize
-             ([typing-context
-               (list* (list #'x 'ty #'e) ... 'ctx)])
-           body ...))]))
 
 (define-for-syntax -> '())
 
@@ -101,16 +104,19 @@
   (syntax-parser
     #:datum-literals (:)
     [(_ (x : t) e)
-     (let ([k-out (syntax-parameter-value #'typing-cont)])
+     (let ([k-out (syntax-parameter-value #'typing-cont)]
+           [ctx (syntax-parameter-value #'typing-context)])
        (with-syntax*
          ([(x-) (generate-temporaries #'(x))]
           [k (syntax-parser
                [(_ t- e-)
                 (k-out #'(_ (t -> t-)
-                            (lambda (x-) e-)))])])
-         #'(syntax-parameterize ([typing-cont k])
-             (with-extend-context ([x : t = x-])
-               e))))]))
+                            (lambda (x-) e-)))])]
+          [new-ctx (lambda ()
+                     (cons (list #'x (syntax->datum #'t) #'x-) ctx))])
+         #'(syntax-parameterize ([typing-cont k]
+                                 [typing-context (new-ctx)])
+             e)))]))
 
 
 ;;; application ;;;
@@ -124,22 +130,19 @@
                   (syntax-parser
                     #:literals (->)
                     [(_ (exp-arg-t -> ret-t) fn-)
-                     (unless (equal? arg-t
-                                     (syntax->datum #'exp-arg-t))
-                       (raise-syntax-error
-                        'application
-                        (format "expected type ~s, got ~s"
-                                (syntax->datum #'exp-arg-t)
-                                arg-t)
+                     (unless (equal? arg-t (syntax->datum #'exp-arg-t))
+                       (raise-syntax-error 'application
+                                           (format "expected type ~s, got ~s"
+                                                   (syntax->datum #'exp-arg-t)
+                                                   arg-t)
                         #'arg))
                      (with-syntax ([arg- arg-])
                        (k-out #'(_ ret-t
                                    (#%app fn- arg-))))]
                     [(_ t fn-)
-                     (raise-syntax-error
-                      'application
-                      "calling value that is not a function"
-                      #'fn)]))]
+                     (raise-syntax-error 'application
+                                         "calling value that is not a function"
+                                         #'fn)]))]
           [arg-k (syntax-parser
                    [(_ arg-t arg-)
                     #'(syntax-parameterize ([typing-cont
