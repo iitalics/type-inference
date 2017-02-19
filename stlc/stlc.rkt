@@ -24,10 +24,9 @@
   (syntax-parser
     [(_ . e)
      (with-syntax
-       ([k (syntax-parser
-             [(_ ty e-)
-              #'(begin (printf "- ~a : ~a\n" 'e- 'ty)
-                       (displayln e-))])])
+       ([k (lambda (ty e-)
+             (with-syntax ([ty ty] [e- e-])
+               #'(printf "~a : ~s\n" e- 'ty)))])
        #'(syntax-parameterize ([typing-cont k])
            e))]))
 
@@ -38,7 +37,6 @@
   typing-context
   '())
 
-
 (define-for-syntax -> '())
 
 
@@ -46,24 +44,27 @@
 
 (define-syntax-parameter
   typing-cont
-  (lambda (stx)
-    (raise-syntax-error #f "no typing continuation" stx)))
+  (lambda (ty e-)
+    (raise-syntax-error #f "no typing continuation" e-)))
+
+(define-for-syntax (get-typing-cont)
+  (syntax-parameter-value #'typing-cont))
 
 (define-syntax lang/get-type
   (syntax-parser
-    [(_ e:expr)
-     (with-syntax ([k (syntax-parser
-                        [(_ ty e-)
-                         #''ty])])
+    [(_ e)
+     (with-syntax ([k (lambda (ty e-)
+                        (with-syntax ([ty ty])
+                          (syntax/loc e- 'ty)))])
        #'(syntax-parameterize ([typing-cont k])
            e))]))
 
 (define-syntax lang/get-expanded
   (syntax-parser
-    [(_ e:expr)
-     (with-syntax ([k (syntax-parser
-                        [(_ ty e-)
-                         #''e-])])
+    [(_ e)
+     (with-syntax ([k (lambda (ty e-)
+                        (with-syntax ([e- e-])
+                          #''e-))])
        #'(syntax-parameterize ([typing-cont k])
            e))]))
 
@@ -73,9 +74,9 @@
 (define-syntax lang/datum
   (syntax-parser
     [(_ . k:number)
-     #'(typing-cont number (#%datum . k))]
+     ((get-typing-cont) 'number #'(#%datum . k))]
     [(_ . s:str)
-     #'(typing-cont string (#%datum . s))]))
+     ((get-typing-cont) 'string #'(#%datum . s))]))
 
 
 ;;; variable ;;;
@@ -84,16 +85,10 @@
   (syntax-parser
     [(_ . x)
      (match (assf (lambda (y)
-                    (cond
-                      [(symbol? y)
-                       (free-identifier=? #'x (datum->syntax #'x y))]
-                      [else
-                       (free-identifier=? #'x y)]))
+                    (free-identifier=? #'x y))
                   (syntax-parameter-value #'typing-context))
        [(list _ type x-)
-        (with-syntax ([type type]
-                      [x- x-])
-          #'(typing-cont type x-))]
+        ((get-typing-cont) type x-)]
        [#f
         (raise-syntax-error (syntax-e #'x) "no such variable!" #'x)])]))
 
@@ -103,50 +98,48 @@
 (define-syntax lang/lambda
   (syntax-parser
     #:datum-literals (:)
-    [(_ (x : t) e)
-     (let ([k-out (syntax-parameter-value #'typing-cont)]
+    [(_ (x : t) body)
+     (let ([t (syntax->datum #'t)]
+           [k-out (syntax-parameter-value #'typing-cont)]
            [ctx (syntax-parameter-value #'typing-context)])
        (with-syntax*
          ([(x-) (generate-temporaries #'(x))]
-          [k (syntax-parser
-               [(_ t- e-)
-                (k-out #'(_ (t -> t-)
-                            (lambda (x-) e-)))])]
+          [k (lambda (ret-t body-)
+               (with-syntax ([body- body-])
+                 (k-out `(,t -> ,ret-t)
+                        #'(lambda (x-) body-))))]
           [new-ctx (lambda ()
-                     (cons (list #'x (syntax->datum #'t) #'x-) ctx))])
+                     (cons (list #'x t #'x-) ctx))])
          #'(syntax-parameterize ([typing-cont k]
                                  [typing-context (new-ctx)])
-             e)))]))
+             body)))]))
 
 
 ;;; application ;;;
 
 (define-syntax lang/app
   (syntax-parser
-    [(_ fn arg)
+    [(_ fun arg)
      (let ([k-out (syntax-parameter-value #'typing-cont)])
        (with-syntax*
-         ([fn-k (lambda (arg-t arg-)
-                  (syntax-parser
-                    #:literals (->)
-                    [(_ (exp-arg-t -> ret-t) fn-)
-                     (unless (equal? arg-t (syntax->datum #'exp-arg-t))
-                       (raise-syntax-error 'application
-                                           (format "expected type ~s, got ~s"
-                                                   (syntax->datum #'exp-arg-t)
-                                                   arg-t)
-                        #'arg))
-                     (with-syntax ([arg- arg-])
-                       (k-out #'(_ ret-t
-                                   (#%app fn- arg-))))]
-                    [(_ t fn-)
-                     (raise-syntax-error 'application
-                                         "calling value that is not a function"
-                                         #'fn)]))]
-          [arg-k (syntax-parser
-                   [(_ arg-t arg-)
-                    #'(syntax-parameterize ([typing-cont
-                                             (fn-k 'arg-t #'arg-)])
-                        fn)])])
-         #'(syntax-parameterize ([typing-cont arg-k])
+         ([k (lambda (arg-t arg-)
+               (with-syntax
+                 ([k2 (lambda (fun-t fun-)
+                        (match fun-t
+                          [`(,exp-arg-t -> ,ret-t)
+                           (unless (equal? arg-t exp-arg-t)
+                             (raise-syntax-error 'application
+                                                 (format "expected type ~s, got ~s"
+                                                         exp-arg-t arg-t)
+                                                 #'arg))
+                           (with-syntax ([fun- fun-] [arg- arg-])
+                             (k-out ret-t
+                                    #'(#%app fun- arg-)))]
+                          [_
+                           (raise-syntax-error 'application
+                                               (format "not a function: ~s" fun-t)
+                                               #'fun)]))])
+                 #'(syntax-parameterize ([typing-cont k2])
+                     fun)))])
+         #'(syntax-parameterize ([typing-cont k])
              arg)))]))
