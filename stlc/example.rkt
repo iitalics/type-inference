@@ -16,6 +16,10 @@
   (lambda (x : A)
     (f x)))
 
+; let binding
+(let (n : integer = 16)
+  (* n n))
+
 #|
 ; application with invalid argument
 (lambda (f : (A -> B))

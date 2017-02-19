@@ -1,11 +1,12 @@
 #lang racket
 (provide (rename-out
           [lang/module-begin #%module-begin]
+          [lang/repl #%top-interaction]
           [lang/app #%app]
           [lang/datum #%datum]
           [lang/top #%top]
           [lang/lambda lambda]
-          [lang/repl #%top-interaction]))
+          [lang/let let]))
 (require racket/stxparam
          (for-syntax syntax/parse
                      (only-in racket/match match)
@@ -13,12 +14,21 @@
 
 (define-syntax lang/module-begin
   (syntax-parser
-    [(_ form ...)
-     #'(#%module-begin
-        (printf "expr: ~s\ntype: ~a\nexpanded: ~v\n\n"
-                'form
-                (lang/get-type form)
-                (lang/get-expanded form)) ...)]))
+    [(_ forms ...)
+     (with-syntax
+       ([(forms-out ...)
+         (for/list ([form (in-list (syntax->list #'(forms ...)))])
+           (with-syntax ([k (lambda (ty e-)
+                              (with-syntax ([ty ty] [e form] [e- e-])
+                                #'(printf "expr: ~s\ntype: ~a\nresult: ~s\n\n"
+                                          'e
+                                          'ty
+                                          e-)))])
+             (with-syntax ([form form])
+               #'(syntax-parameterize ([typing-cont k])
+                   form))))])
+       #'(#%module-begin
+          forms-out ...))]))
 
 (define-syntax lang/repl
   (syntax-parser
@@ -156,3 +166,13 @@
                      fun)))])
          #'(syntax-parameterize ([typing-cont k])
              arg)))]))
+
+
+;;; let binding ;;;
+
+(define-syntax lang/let
+  (syntax-parser
+    #:datum-literals (: =)
+    [(_ (x : t = rhs) body)
+     #'(lang/app (lang/lambda (x : t) body)
+                 rhs)]))
