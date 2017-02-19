@@ -37,10 +37,10 @@
   typing-context
   (let ([curry2 (lambda (f)
                   (lambda (x) (lambda (y) (f x y))))])
-    (list (list 'succ '(number -> number) add1)
-          (list '+ '(number -> (number -> number)) (curry2 +))
-          (list '* '(number -> (number -> number)) (curry2 *))
-          (list '< '(number -> (number -> boolean)) (curry2 <))
+    (list (list 'succ '(integer -> integer) add1)
+          (list '+ '(integer -> (integer -> integer)) (curry2 +))
+          (list '* '(integer -> (integer -> integer)) (curry2 *))
+          (list '< '(integer -> (integer -> boolean)) (curry2 <))
           )))
 
 (define-for-syntax (get-typing-context)
@@ -80,8 +80,8 @@
 
 (define-syntax lang/datum
   (syntax-parser
-    [(_ . k:number)
-     ((get-typing-cont) 'number #'(#%datum . k))]
+    [(_ . k:integer)
+     ((get-typing-cont) 'integer #'(#%datum . k))]
     [(_ . k:boolean)
      ((get-typing-cont) 'boolean #'(#%datum . k))]
     [(_ . k:str)
