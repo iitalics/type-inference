@@ -35,9 +35,16 @@
 
 (define-syntax-parameter
   typing-context
-  '())
+  (let ([curry2 (lambda (f)
+                  (lambda (x) (lambda (y) (f x y))))])
+    (list (list 'succ '(number -> number) add1)
+          (list '+ '(number -> (number -> number)) (curry2 +))
+          (list '* '(number -> (number -> number)) (curry2 *))
+          (list '< '(number -> (number -> boolean)) (curry2 <))
+          )))
 
-(define-for-syntax -> '())
+(define-for-syntax (get-typing-context)
+  (syntax-parameter-value #'typing-context))
 
 
 ;;;; typing continuation ;;;;
@@ -75,8 +82,10 @@
   (syntax-parser
     [(_ . k:number)
      ((get-typing-cont) 'number #'(#%datum . k))]
-    [(_ . s:str)
-     ((get-typing-cont) 'string #'(#%datum . s))]))
+    [(_ . k:boolean)
+     ((get-typing-cont) 'boolean #'(#%datum . k))]
+    [(_ . k:str)
+     ((get-typing-cont) 'string #'(#%datum . k))]))
 
 
 ;;; variable ;;;
@@ -85,8 +94,10 @@
   (syntax-parser
     [(_ . x)
      (match (assf (lambda (y)
-                    (free-identifier=? #'x y))
-                  (syntax-parameter-value #'typing-context))
+                    (cond
+                      [(symbol? y) (free-identifier=? #'x (datum->syntax #'x y))]
+                      [else (free-identifier=? y #'x)]))
+                  (get-typing-context))
        [(list _ type x-)
         ((get-typing-cont) type x-)]
        [#f
@@ -100,16 +111,16 @@
     #:datum-literals (:)
     [(_ (x : t) body)
      (let ([t (syntax->datum #'t)]
-           [k-out (syntax-parameter-value #'typing-cont)]
-           [ctx (syntax-parameter-value #'typing-context)])
+           [k-out (get-typing-cont)]
+           [ctx (get-typing-context)])
        (with-syntax*
          ([(x-) (generate-temporaries #'(x))]
+          [new-ctx (lambda ()
+                     (cons (list #'x t #'x-) ctx))]
           [k (lambda (ret-t body-)
                (with-syntax ([body- body-])
                  (k-out `(,t -> ,ret-t)
-                        #'(lambda (x-) body-))))]
-          [new-ctx (lambda ()
-                     (cons (list #'x t #'x-) ctx))])
+                        #'(lambda (x-) body-))))])
          #'(syntax-parameterize ([typing-cont k]
                                  [typing-context (new-ctx)])
              body)))]))
@@ -119,9 +130,11 @@
 
 (define-syntax lang/app
   (syntax-parser
+    [(_ fun arg1 arg2 args ...)
+     #'(lang/app (lang/app fun arg1) arg2 args ...)]
     [(_ fun arg)
      (let ([k-out (syntax-parameter-value #'typing-cont)])
-       (with-syntax*
+       (with-syntax
          ([k (lambda (arg-t arg-)
                (with-syntax
                  ([k2 (lambda (fun-t fun-)
@@ -137,7 +150,7 @@
                                     #'(#%app fun- arg-)))]
                           [_
                            (raise-syntax-error 'application
-                                               (format "not a function: ~s" fun-t)
+                                               "not a function"
                                                #'fun)]))])
                  #'(syntax-parameterize ([typing-cont k2])
                      fun)))])
