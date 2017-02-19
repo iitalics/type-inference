@@ -7,7 +7,7 @@ Run example program:
 
     $ racket example.rkt
 
-#lang REPL:
+`#lang` REPL:
 
     $ racket -int stlc.rkt
 
