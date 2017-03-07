@@ -1,5 +1,6 @@
 #lang racket
 (require syntax/parse
+         syntax/transformer
          racket/syntax
          "types.rkt"
          (for-template racket/base))
@@ -90,6 +91,35 @@
        (raise-syntax-error #f "bidirectional" stx)]))
 
 
+(provide syntax-parser-bidirectional)
+(require (for-syntax syntax/parse))
+(define-syntax (syntax-parser-bidirectional stx)
+  (define (parse-bidir-args parts)
+    (syntax-parse parts
+      ;; #:infer <expr>
+      [(#:infer e:expr . next)
+       (with-syntax ([next-args (parse-bidir-args #'next)])
+         #'(#:infer (lambda () e) . next-args))]
+      ;; #:check <var> <expr>
+      [(#:check x:id e:expr . next)
+       (with-syntax ([next-args (parse-bidir-args #'next)])
+         #'(#:check (lambda (x) e) . next-args))]
+      [(arg . next)
+       (with-syntax ([next-args (parse-bidir-args #'next)])
+         #'(arg . next-args))]
+      [() #'()]))
+  (syntax-parse stx
+    [(_ [patn . parts] ...)
+     (with-syntax ([(bidir-args ...)
+                    (map parse-bidir-args
+                         (syntax->list #'(parts ...)))])
+       #'(lambda (sstx)
+           (syntax-parse sstx
+             [patn (bidirectional sstx . bidir-args)] ...)))]))
+
+
+
+
 
 ;;; util ;;;
 ;; Convenience function for chaining (syntax-property ...) calls
@@ -115,9 +145,11 @@
 ;; that token does not have the correct tag.
 (define (trim-syntax stx tg)
   (syntax-parse stx
-    #:literals (let-values)
-    ; remove empty let-values left over by let-syntax ...
+    #:literals (let-values #%expression)
+    ; remove meaningless syntax left over by macros
     [(let-values () stx-)
+     (trim-syntax #'stx- tg)]
+    [(#%expression stx-)
      (trim-syntax #'stx- tg)]
 
     [_ (cond
@@ -142,12 +174,16 @@
          stx
          ctx))
 
-;; Create a set!-transformer with type information, that untyped expansion.
+;; Create a rename-transformer with type information and untyped expansion.
 (define (make-typed-var-transformer type expands-to)
   (make-set!-transformer
-   (syntax-parser
-     [stx:id
-      (bidirectional #'stx
-                     #:infer (lambda ()
-                               (values expands-to type))
-       )])))
+   (lambda (stx)
+     (syntax-parse stx
+       ; TODO: make this more modular?
+       [_:id (bidirectional stx #:infer (lambda () (values expands-to type)))]
+       [(a . b)
+        ; manually build a new #%app to prevent this from being treated as a non-identifier
+        (datum->syntax stx
+                       (list* '#%app
+                              #'a
+                              #'b))]))))

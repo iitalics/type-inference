@@ -1,6 +1,3 @@
 #lang s-exp "lang.rkt"
 
-
-3
-(lambda x 3)
-(lambda x x)
+(lambda (f g) (lambda (x) (f (g x))))
