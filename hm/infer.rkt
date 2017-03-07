@@ -175,6 +175,7 @@
          ctx))
 
 ;; Create a rename-transformer with type information and untyped expansion.
+(provide make-typed-var-transformer)
 (define (make-typed-var-transformer type expands-to)
   (make-set!-transformer
    (lambda (stx)

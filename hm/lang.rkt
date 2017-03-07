@@ -3,12 +3,16 @@
 (require (for-syntax syntax/parse
                      racket/syntax
                      "types.rkt"
-                     "infer.rkt"))
+                     "infer.rkt")
+         racket/require-syntax)
+
 
 (provide (rename-out [mod-begin #%module-begin]))
 (define-syntax (mod-begin stx)
   (syntax-parse stx
-    [(_ forms ...)
+    #:literals (req-typed-in)
+    [(_ (req-typed-in . req-spec) ...
+        forms ...)
      (with-syntax
        ([(out ...)
          (for/list ([e (in-list (syntax-e #'(forms ...)))])
@@ -19,6 +23,7 @@
                          '#,e-
                          '#,(subs e.t)))))])
        #'(#%module-begin
+          (req-typed-in . req-spec) ...
           out ...))]))
 
 (provide (rename-out [top-interaction #%top-interaction]))
@@ -82,3 +87,40 @@
               (values #`(#%app #,fn- . #,args-)
                       ret.t))
     ]))
+
+
+(define-for-syntax (parse-type stx)
+  (syntax-parse stx
+    #:literals (quote)
+    #:datum-literals (->)
+    [(-> args:expr ... ret:expr)
+     (type-fun (map parse-type
+                    (syntax-e #'(args ...)))
+               (parse-type #'ret))]
+    [(quote v)
+     (raise-syntax-error #f "type variable syntax unsupported right now" stx)]
+    [d:id
+     (type-basic #'d)]))
+
+(provide (rename-out [req-typed-in require-typed]))
+(define-syntax req-typed-in
+  (syntax-parser
+    [(_ mod [symbol:id type:expr] ...)
+     (with-syntax
+       ([( (new-symbol mac-def) ...)
+         (for/list ([sym (syntax-e #'(symbol ...))]
+                    [type-stx (syntax-e #'(type ...))])
+           (let* ([sym- (generate-temporary #'sym)]
+                  [type (parse-type type-stx)]
+                  [tvt (make-typed-var-transformer type sym-)])
+             (list sym-
+                   #`(define-syntax #,sym #,tvt))))])
+       #'(begin
+           (require (only-in mod
+                             [symbol new-symbol] ...))
+           (printf "; import `~a' => `~a'\n\n"
+                   'symbol 'new-symbol) ...
+           mac-def ...))]))
+
+
+(provide #%top)

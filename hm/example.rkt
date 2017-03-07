@@ -1,3 +1,7 @@
 #lang s-exp "lang.rkt"
+(require-typed racket/base
+               [+ (-> int int int)])
 
-(lambda (f g) (lambda (x) (f (g x))))
+1
+2
++
