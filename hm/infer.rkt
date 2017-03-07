@@ -5,17 +5,7 @@
          "types.rkt"
          (for-template racket/base))
 
-;; This synax is returned by successful inference/checking, with appropriate
-;; syntax properties attached to it. It's kind of hacky ATM; I originally
-;; had the untyped syntax be return by the inference macros, with only
-;; type information as a syntax property, but local-expand would end up
-;; expanding it prematurely, which ended up with really crazy scoping set
-;; issues.
-(define (make-output-token tg)
-  (syntax-property #`(quote #,(generate-temporary #'OUTPUT-TOKEN)) tg #t))
-(define tag:output-infer 'OUT-INF)
-(define tag:output-check 'OUT-CHK)
-
+;;; Syntax property keys: ;;;
 ;; `tag:dir' is applied in (infer ...)/(check ...) to tell the macro down the line
 ;; which kind of inference is going on
 (define tag:dir 'DIRECTION)
@@ -28,8 +18,20 @@
 ;; result of this macro should be
 (define tag:untyped 'UNTYPED)
 
+;; This synax is returned by successful inference/checking, with appropriate
+;; syntax properties attached to it. It's kind of hacky ATM; I originally
+;; had the untyped syntax be returned by the inference macros, with only
+;; type information as a syntax property, but local-expand would end up
+;; expanding it prematurely, which ended up with really crazy scoping set
+;; issues. By just returning a quoted symbol, expansion stops.
+(define (make-output-token tg)
+  (syntax-property #`(quote #,(generate-temporary #'OUTPUT-TOKEN)) tg #t))
+(define tag:output-infer 'OUT-INF)
+(define tag:output-check 'OUT-CHK)
 
-;;;; invoking type judgements ;;;;
+
+
+;;;; Making type judgements ;;;;
 
 ;; Infer the type of the given expression, possibly introducing new
 ;; context. Returns two values: the resulting untyped syntax, and
@@ -63,9 +65,7 @@
 (provide check*)
 (define (check* ty stx . ctx) (check ty stx ctx))
 
-
-;; Respond to requests for type inference on the given syntax with
-;; the given thunks.
+;; Respond to requests for type inference on the given syntax.
 ;; #:infer specifies a zero-argument function that should return two
 ;; values: the resulting untyped syntax, and the inferred type.
 ;; #:check specifies a one-argument function that accepts the expected
@@ -91,6 +91,20 @@
        (raise-syntax-error #f "bidirectional" stx)]))
 
 
+;;; Macro to create a macro with typing, without a ton
+;;; of parens and thunks.
+;;; e.g.
+;; (syntax-parser-bidirectional
+;;  [(_ fun arg)
+;;   #:infer <INF>
+;;   #:check (<EXP>) <CHK>])
+;; =>
+;; (lambda (stx)
+;;   (syntax-parse stx
+;;     [(_ fun arg)
+;;      (bidirectional stx
+;;                     #:infer (lambda () <INF>)
+;;                     #:check (lambda (<EXP>) <CHK>))]))
 (provide syntax-parser-bidirectional)
 (require (for-syntax syntax/parse))
 (define-syntax (syntax-parser-bidirectional stx)
@@ -100,8 +114,8 @@
       [(#:infer e:expr . next)
        (with-syntax ([next-args (parse-bidir-args #'next)])
          #'(#:infer (lambda () e) . next-args))]
-      ;; #:check <var> <expr>
-      [(#:check x:id e:expr . next)
+      ;; #:check (<var>) <expr>
+      [(#:check (x:id) e:expr . next)
        (with-syntax ([next-args (parse-bidir-args #'next)])
          #'(#:check (lambda (x) e) . next-args))]
       [(arg . next)
@@ -112,16 +126,15 @@
     [(_ [patn . parts] ...)
      (with-syntax ([(bidir-args ...)
                     (map parse-bidir-args
-                         (syntax->list #'(parts ...)))])
+                         (syntax-e #'(parts ...)))])
        #'(lambda (sstx)
            (syntax-parse sstx
              [patn (bidirectional sstx . bidir-args)] ...)))]))
 
 
 
+;;; Utilities ;;;
 
-
-;;; util ;;;
 ;; Convenience function for chaining (syntax-property ...) calls
 (define (stx-props stx . args)
   (let trav ([stx stx] [args args])
@@ -141,7 +154,7 @@
                tg))
 
 ;; Trim excess syntax artifacts (e.g. (let-values () ...)) from the
-;; given syntax, and return the resulting output token, OR error if
+;; given syntax. Return the resulting output token, or error if
 ;; that token does not have the correct tag.
 (define (trim-syntax stx tg)
   (syntax-parse stx
@@ -151,11 +164,9 @@
      (trim-syntax #'stx- tg)]
     [(#%expression stx-)
      (trim-syntax #'stx- tg)]
-
     [_ (cond
          ; if it contains the expected tag, we are finished
          [(syntax-property stx tg) stx]
-
          ; this is the base value that should contain type information
          ; this happens when we encounter untyped symbols/syntax
          [else (displayln (syntax-property-symbol-keys stx))
@@ -165,7 +176,7 @@
 ;; The context should be a list of three-element lists: the variable name,
 ;; it's type, and the untyped syntax it expands into.
 (define (introduce-context ctx stx)
-  ; should this be foldr??
+  ; should this be foldr ?
   (foldl (lambda (binding next)
            (match-let ([(list x x.t x-) binding])
              (let ([tvt (make-typed-var-transformer x.t x-)])
@@ -174,8 +185,10 @@
          stx
          ctx))
 
-;; Create a rename-transformer with type information and untyped expansion.
+;; Create a set!-transformer for a typed identifier.
+(provide make-typed-var-transformer)
 (define (make-typed-var-transformer type expands-to)
+  ; none of make-variable-like-transformer etc. worked how I wanted them to...
   (make-set!-transformer
    (lambda (stx)
      (syntax-parse stx
