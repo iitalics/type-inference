@@ -4,14 +4,18 @@
          racket/match)
 
 (provide (type-out Int Str → all))
+
 (define-base-types Int Str)
+
 (define-type-constructor →
   #:arity >= 1)
+
 (define-binding-type all
   #:bvs >= 1
   #:arity = 1)
 
 (define-base-type ??)
+
 
 
 (provide (rename-out [mod-beg #%module-begin]))
@@ -40,7 +44,7 @@
      #:with τ/s (type->str #'τ)
      #'(printf "~s\n - ~a\n"
                e-
-               '..)]))
+               'τ/s)]))
 
 (provide (rename-out [datum #%datum]))
 (define-typed-syntax datum
@@ -49,7 +53,11 @@
    [⊢ (#%datum- . k) ⇒ Int]]
   [(_ . k:str) ≫
    --------
-   [⊢ (#%datum- . k) ⇒ Str]])
+   [⊢ (#%datum- . k) ⇒ Str]]
+  [(_ . x) ≫
+   --------
+   [#:error (type-error #:src #'x
+                        #:msg "unsupported datum: ~v" #'x)]])
 
 (provide (rename-out [app #%app]))
 (define-typed-syntax app
@@ -68,8 +76,7 @@
   [(_ ([x_i:id : τ_i:type] ...) e) ≫
    [[x_i ≫ x_i- ⇒ τ_i.norm] ... ⊢ e ≫ e- ⇒ τ_r]
    --------
-   [⊢ (lambda- (x_i- ...) e-) ⇒ (→ τ_i ... τ_r)]])
-
+   [⊢ (lambda- (x_i- ...) e-) ⇒ (→ τ_i.norm ... τ_r)]])
 
 
 (provide (rename-out [t+ +]))
