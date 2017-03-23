@@ -62,14 +62,19 @@
              (stx-length #'(τ ...))
              (stx-length #'(e ...)))))
 
+  (require macrotypes/type-constraints)
+
   ;; unification algorithm
   ;;; (unify-all (listof identifier?)
   ;;;            syntax?)
   ;;;   -> (listof type-stx?)
+  ;;; where each type in the resulting list corresponds to the identifier given
   (define (unify-all Xs cs)
-    (with-syntax ([(X ...) Xs] [({τ1 τ2} ...) cs])
-      (for/list ([X (in-syntax #'(X ...))])
-        #'??)))
+    (let ([subs (add-constraints Xs '() cs)])
+      (map (lambda (X)
+             (second (assoc X subs
+                            bound-identifier=?)))
+           (syntax-e Xs))))
   )
 
 
