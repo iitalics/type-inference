@@ -7,131 +7,97 @@
          (only-in racket/sequence
                   in-syntax))
 
-(provide (type-out Int Str → ∀))
+(provide (type-out Int Str →))
 
+(define-type-constructor → #:arity >= 1)
 (define-base-types Int Str)
-
-(define-type-constructor →
-  #:arity >= 1)
-
-(define-binding-type ∀
-  #:bvs >= 1
-  #:arity = 1)
-
 (define-base-type ??)
 
 
-;; mod-beg: toplevel parser
-(provide (rename-out [mod-beg #%module-begin]))
-(define-syntax mod-beg
-  (syntax-parser
-    [(_ forms ...)
-     #'(#%module-begin
-        ; TODO: stuff here
-        (void))]))
-
-;; top-repl: REPL handler
-(provide (rename-out [top-repl #%top-interaction]))
-(define-syntax top-repl
-  (syntax-parser
-    [(_ . e)
-     #:with (_ _ (e-) (τ)) (infer (list #'e))
-     #:with τ/s (type->str #'τ)
-     #'(printf "~s\n - ~a\n"
-               e-
-               'τ/s)]))
-
-;; convert type to string representation
-(define (type->str t)
-  (let ([orig (match (syntax-property t 'orig)
-                [(list _ ... o) o]
-                [_ t])])
-    (match (syntax->datum orig)
-      [(list ts ...) (string-join (map type->str ts)
-                                  #:before-first "("
-                                  #:after-last ")")]
-      [x (~a x)])))
-
 (begin-for-syntax
-  ;; syntax class for checking that argument counts match
-  (define-syntax-class arg#-check
-    (pattern
-     ([e ...] [τ ...])
-     #:fail-unless (stx-length=? #'(e ...) #'(τ ...))
-     (format "wrong number of arguments to function; expected ~a, got ~a"
-             (stx-length #'(τ ...))
-             (stx-length #'(e ...)))))
+  ;; get the expected prototype for a syntax object
+  (define (prototype-of stx)
+    (or (syntax-property stx '~) #'??))
 
-  (require macrotypes/type-constraints)
+  ;; attach an expected prototype to a syntax object
+  (define (attach-prototype stx p)
+    (syntax-property stx '~ p))
 
-  ;; unification algorithm
-  ;;; (unify-all (listof identifier?)
-  ;;;            syntax?)
-  ;;;   -> (listof type-stx?)
-  ;;; where each type in the resulting list corresponds to the identifier given
-  (define (unify-all Xs cs)
-    (let ([subs (add-constraints Xs '() cs)])
-      (map (lambda (X)
-             (second (assoc X subs
-                            bound-identifier=?)))
-           (syntax-e Xs))))
+  ;; are the given prototypes and full types compatible?
+  (define (prototype-compat? p τ)
+    (syntax-parse (list p τ)
+      [((~datum ??) _) #t]
+      [(x:id y:id) (free-identifier=? #'x #'y)]
+      [((ps ...) (τs ...))
+       (andmap prototype-compat?
+               (syntax-e #'(ps ...))
+               (syntax-e #'(τs ...)))]
+      [(_ _) #f]))
+
+  ;; expect the given type and prototype to be compatible
+  (define (prototype-expect p τ #:src [src p])
+    (unless (prototype-compat? p τ)
+      (raise-syntax-error #f (format "expected type ~s, got ~s"
+                                     (syntax-e #'p)
+                                     (syntax-e #'τ))
+                          src)))
+
+  ;; convert type to string representation
+  (define (type->str stx)
+    (define (orig stx)
+      (syntax-parse (match (syntax-property stx 'orig)
+                      [#f stx]
+                      [origs (last origs)])
+        [(e ...) (map orig (syntax-e #'(e ...)))]
+        [k (syntax-e #'k)]))
+    (format "~a" (orig stx)))
   )
 
+;; toplevel parser
+(provide (rename-out [mod-beg #%module-begin]))
+(define-typed-syntax mod-beg
+  [(_ form ...) ≫
+   [⊢ form ≫ form- ⇒ τ] ...
+   #:with (τ/s ...) (map type->str (syntax-e #'(τ ...)))
+   --------
+   [≻ (#%module-begin
+        (printf "~s : ~a\n\n"
+                form-
+                'τ/s) ...)]])
 
-(provide (rename-out [datum #%datum]))
-(define-typed-syntax datum
+;; repl input
+(provide (rename-out [repl #%top-interaction]))
+(define-typed-syntax repl
+  [(_ . e) ≫
+   [⊢ e ≫ e- ⇒ τ]
+   #:with τ/s (type->str #'τ)
+   --------
+   [≻ (printf "~s : ~a\n"
+              e-
+              'τ/s)]])
+
+;; datum syntax
+(provide (rename-out [dat #%datum]))
+(define-typed-syntax dat
   [(_ . k:integer) ≫
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'Int
+                           #:src #'k)]
    --------
-   [⊢ (#%datum- . k) ⇒ Int]]
+   [⊢ (#%datum . k) ⇒ Int]]
   [(_ . k:str) ≫
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'Str
+                           #:src #'k)]
    --------
-   [⊢ (#%datum- . k) ⇒ Str]]
-  [(_ . x) ≫
+   [⊢ (#%datum . k) ⇒ Str]]
+  [(_ . k) ≫
    --------
-   [#:error (type-error #:src #'x
-                        #:msg "unsupported datum: ~v" #'x)]])
+   [#:error "unsupported datum"]])
 
-(provide (rename-out [app #%app]))
-(define-typed-syntax app
-  ; normal application
-  [(_ f e_i ...) ≫
-   [⊢ f ≫ f- ⇒ (~→ τ_i ... τ_r)]
-   #:with :arg#-check #'([e_i ...] [τ_i ...])
-   [⊢ e_i ≫ e_i- ⇐ τ_i] ...
-   --------
-   [⊢ (#%app- f- e_i- ...) ⇒ τ_r]]
-
-  ; ∀ inference
-  [(_ f e_i ...) ≫
-   [⊢ f ≫ f- ⇒ (~∀ (X ...) (~→ τ_i ... τ_r))]
-   #:with :arg#-check #'([e_i ...] [τ_i ...])
-   [⊢ e_i ≫ e_i- ⇒ τ_j] ...
-   #:with (σ ...) (unify-all #'(X ...)
-                             #'({τ_i τ_j} ...))
-   #:with τ_r- (substs #'(σ ...)
-                       #'(X ...)
-                       #'τ_r)
-   --------
-   [⊢ (#%app- f- e_i- ...) ⇒ τ_r-]]
-
-  ; ??
-  [(_ f e_i ...) ≫
-   [⊢ f ≫ _ ⇒ τ_f]
-   --------
-   [#:error (type-error #:src #'f
-                        #:msg "cannot apply type: ~a" #'τ_f)]]
-  )
-
+;; lambda syntax
 (provide (rename-out [lam lambda]))
-(define-typed-syntax lam #:datum-literals (:)
-  [(_ ([x_i:id : τ_i:type] ...) e) ≫
-   [[x_i ≫ x_i- : τ_i.norm] ... ⊢ e ≫ e- ⇒ τ_r]
-   --------
-   [⊢ (lambda- (x_i- ...) e-) ⇒ (→ τ_i.norm ... τ_r)]])
-
-
-(provide
- (typed-out [+ : (→ Int Int Int)]
-            [[identity : (∀ (X) (→ X X))] id]
-            [const : (∀ (X) (→ X (∀ (Y) (→ Y X))))]
-            ))
+(define-typed-syntax lam
+  #:datum-literals (:)
+  [(_ ((~and arg (~or :id :type-bind)) ...) e)
+   #:with (τ_exp ... p_ret)
