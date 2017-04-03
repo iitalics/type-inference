@@ -10,8 +10,43 @@
 (provide (type-out Int Str →))
 
 (define-type-constructor → #:arity >= 1)
+(define-binding-type ∀ #:arity = 1 #:bvs >= 1)
 (define-base-types Int Str)
 (define-base-type ??)
+
+(begin-for-syntax
+  (define-syntax-class base-type
+    #:attributes (name internal-name)
+    (pattern ((~literal #%plain-app) internal-name:id)
+             #:with (_ ... name) (syntax-property this-syntax 'orig)))
+  (define-syntax-class ctor-type
+    #:attributes (name internal-name [arg 1])
+    (pattern ((~literal #%plain-app) internal-name:id
+              ((~literal #%plain-lambda) ()
+               ((~literal #%expression) . _)
+               arg ...))
+             #:with (_ ... (name . _)) (syntax-property this-syntax 'orig)))
+  (define-syntax-class bind-type
+    #:attributes (name internal-name [bv 1] [arg 1])
+    (pattern ((~literal #%plain-app) internal-name:id
+              ((~literal #%plain-lambda) (bv:id ...)
+               ((~literal #%expression) . _)
+               arg ...))
+             #:with (_ ... (name . _)) (syntax-property this-syntax 'orig)))
+
+  ;; convert type to string
+  (define (type->string t)
+    (define ->dat
+      (syntax-parser
+        [τ:base-type (syntax-e #'τ.name)]
+        [τ:ctor-type (list* (syntax-e #'τ.name)
+                            (map ->dat (syntax-e #'(τ.arg ...))))]
+        [τ:bind-type (list* (syntax-e #'τ.name)
+                            (map syntax-e (syntax-e #'(τ.bv ...)))
+                            (map ->dat (syntax-e #'(τ.arg ...))))]
+        [x (syntax->datum #'x)]))
+    (~a (->dat t)))
+  )
 
 
 (begin-for-syntax
@@ -25,13 +60,11 @@
 
   ;; are the given prototypes and full types compatible?
   (define (prototype-compat? p τ)
-    (syntax-parse (list p τ)
-      [((~datum ??) _) #t]
-      [(x:id y:id) (free-identifier=? #'x #'y)]
-      [((ps ...) (τs ...))
-       (andmap prototype-compat?
-               (syntax-e #'(ps ...))
-               (syntax-e #'(τs ...)))]
+    (syntax-parse (list ((current-type-eval) p)
+                        ((current-type-eval) τ))
+      [(~?? _) #t]
+      [(b1:base-type b2:base-type)
+       (free-identifier=? #'b1.internal-name #'b2.internal-name)]
       [(_ _) #f]))
 
   ;; expect the given type and prototype to be compatible
@@ -41,16 +74,6 @@
                                      (syntax-e #'p)
                                      (syntax-e #'τ))
                           src)))
-
-  ;; convert type to string representation
-  (define (type->str stx)
-    (define (orig stx)
-      (syntax-parse (match (syntax-property stx 'orig)
-                      [#f stx]
-                      [origs (last origs)])
-        [(e ...) (map orig (syntax-e #'(e ...)))]
-        [k (syntax-e #'k)]))
-    (format "~a" (orig stx)))
   )
 
 ;; toplevel parser
@@ -59,11 +82,18 @@
   [(_ form ...) ≫
    [⊢ form ≫ form- ⇒ τ] ...
    #:with (τ/s ...) (map type->str (syntax-e #'(τ ...)))
+   #:with test ((current-type-eval) #'(∀ (x) (→ x Int Int)))
+   #:with test/s (type->string #'test)
    --------
    [≻ (#%module-begin
         (printf "~s : ~a\n\n"
                 form-
-                'τ/s) ...)]])
+                'τ/s)
+        ...
+        (printf "----\n~a\n->string: ~a\n"
+                'test
+                'test/s))]])
+
 
 ;; repl input
 (provide (rename-out [repl #%top-interaction]))
@@ -94,10 +124,3 @@
   [(_ . k) ≫
    --------
    [#:error "unsupported datum"]])
-
-;; lambda syntax
-(provide (rename-out [lam lambda]))
-(define-typed-syntax lam
-  #:datum-literals (:)
-  [(_ ((~and arg (~or :id :type-bind)) ...) e)
-   #:with (τ_exp ... p_ret)
