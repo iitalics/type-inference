@@ -90,7 +90,7 @@
    #:with test/s (type->string #'test)
    --------
    [≻ (#%module-begin
-        (printf "~s : ~a\n\n"
+        (printf "~s : ~a\n"
                 form-
                 'τ/s)
         ...)]])
