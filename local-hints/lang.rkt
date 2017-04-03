@@ -1,8 +1,6 @@
 #lang turnstile
 (require (only-in racket/format ~a)
          (only-in racket/string string-join)
-         (only-in racket/function identity const)
-         racket/match
          syntax/parse
          (only-in racket/sequence
                   in-syntax))
@@ -73,9 +71,10 @@
       [(b1:base-type b2:base-type)
        (free-identifier=? #'b1.internal-name #'b2.internal-name)]
       [((~→ p_i ...) (~→ τ_i ...))
-       (andmap prototype-compat?
-               (syntax-e #'(p_i ...))
-               (syntax-e #'(τ_i ...)))]
+       (and (stx-length=? #'(p_i ...) #'(τ_i ...))
+            (andmap prototype-compat?
+                    (syntax-e #'(p_i ...))
+                    (syntax-e #'(τ_i ...))))]
       [(_ _) #f]))
 
   ;; is the prototype a full type (contains no ?? holes)
@@ -144,7 +143,7 @@
 (define-typed-syntax mod-beg
   [(_ form ...) ≫
    [⊢ form ≫ form- ⇒ τ] ...
-   #:with (τ/s ...) (map type->str (syntax-e #'(τ ...)))
+   #:with (τ/s ...) (map type->string (syntax-e #'(τ ...)))
    --------
    [≻ (#%module-begin
        (printf "~s : ~a\n"
@@ -157,7 +156,7 @@
 (define-typed-syntax repl
   [(_ . e) ≫
    [⊢ e ≫ e- ⇒ τ]
-   #:with τ/s (type->str #'τ)
+   #:with τ/s (type->string #'τ)
    --------
    [≻ (printf "~s : ~a\n"
               e-
