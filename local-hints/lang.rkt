@@ -65,6 +65,10 @@
       [(~?? _) #t]
       [(b1:base-type b2:base-type)
        (free-identifier=? #'b1.internal-name #'b2.internal-name)]
+      [((~→ p_i ...) (~→ τ_i ...))
+       (andmap prototype-compat?
+               (syntax-e #'(p_i ...))
+               (syntax-e #'(τ_i ...)))]
       [(_ _) #f]))
 
   ;; expect the given type and prototype to be compatible
@@ -106,6 +110,7 @@
 (provide (rename-out [dat #%datum]))
 (define-typed-syntax dat
   [(_ . k:integer) ≫
+   ; TODO: extract this 'idiom' out since it appears a lot
    #:do [(prototype-expect (prototype-of this-syntax)
                            #'Int
                            #:src #'k)]
@@ -121,17 +126,61 @@
    --------
    [#:error "unsupported datum"]])
 
+;; application
+(provide (rename-out [app #%app]))
+(define-typed-syntax app
+  [(_ fun arg ...) ≫
+   [⊢ fun ≫ fun- ⇒ (~→ arg_τ ... ret_τ)]
+   #:do [(unless (= (stx-length #'(arg ...))
+                    (stx-length #'(arg_τ ...)))
+           (raise-syntax-error #f "wrong number of arguments to function"
+                               #'fun))]
 
-;; dumb thing
-(provide (rename-out [plus +]))
-(define-typed-syntax plus
-  [(_ x y) ≫
-   #:with x* (attach-prototype #'x #'Int)
-   #:with y* (attach-prototype #'y #'Int)
-   [⊢ x* ≫ x- ⇒ _]
-   [⊢ y* ≫ y- ⇒ _]
-   #:do [(prototype-expect (prototype-of this-syntax)
-                           #'Int
-                           #:src this-syntax)]
+   #:with (arg* ...) (map attach-prototype
+                          (syntax-e #'(arg ...))
+                          (syntax-e #'(arg_τ ...)))
+   [⊢ arg* ≫ arg- ⇒ arg_τ-] ...
    --------
-   [⊢ (+ x- y-) ⇒ Int]])
+   [⊢ (#%app fun- arg- ...) ⇒ ret_τ]]
+
+  [(_ fun arg ...) ≫
+   [⊢ fun ≫ fun- ⇒ τ]
+   --------
+   [#:error (format "type cannot be applied: ~a"
+                    (type->string #'τ))]])
+
+
+;; primitive ops
+(define-syntax provide-typed
+  (syntax-parser
+    [(_ x:id τ)
+     #'(provide-typed [x x] τ)]
+    [(_ x:id (~datum :) τ)
+     #'(provide-typed [x x] τ)]
+    [(_ [x:id x-out:id] (~datum :) τ)
+     #'(provide-typed [x x-out] τ)]
+    [(_ [x:id x-out:id] τ:type)
+     #:with x-internal (generate-temporary #'x)
+     #'(begin
+         (define-typed-syntax x-internal
+           [_:id ≫
+            #:do [(prototype-expect (prototype-of this-syntax)
+                                    #'τ
+                                    #:src this-syntax)]
+            --------
+            [⊢ x-out ⇒ τ]]
+           [(a (... ...)) ≫
+            --------
+            [≻ (app a (... ...))]])
+         (provide (rename-out [x-internal x-out])))]))
+
+(provide-typed + : (→ Int Int Int))
+(provide-typed add1 : (→ Int Int))
+(provide-typed add2 : (→ Int Int))
+(provide-typed nat-rec-int : (→ Int (→ Int Int) Int Int))
+
+(define (add2 x) (+ 2 x))
+(define (nat-rec-int b f n)
+  (if (zero? n)
+      b
+      (f (nat-rec-int b f (sub1 n)))))
