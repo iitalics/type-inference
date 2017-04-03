@@ -145,8 +145,6 @@
   [(_ form ...) ≫
    [⊢ form ≫ form- ⇒ τ] ...
    #:with (τ/s ...) (map type->str (syntax-e #'(τ ...)))
-   #:with test ((current-type-eval) #'(∀ (x) (→ x Int Int)))
-   #:with test/s (type->string #'test)
    --------
    [≻ (#%module-begin
        (printf "~s : ~a\n"
