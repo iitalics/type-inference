@@ -52,16 +52,16 @@
 (begin-for-syntax
   ;; get the expected prototype for a syntax object
   (define (prototype-of stx)
-    (or (syntax-property stx '~) #'??))
+    (or (syntax-property stx '~)
+        ((current-type-eval) #'??)))
 
   ;; attach an expected prototype to a syntax object
   (define (attach-prototype stx p)
-    (syntax-property stx '~ p))
+    (syntax-property stx '~ ((current-type-eval) p)))
 
   ;; are the given prototypes and full types compatible?
   (define (prototype-compat? p τ)
-    (syntax-parse (list ((current-type-eval) p)
-                        ((current-type-eval) τ))
+    (syntax-parse (list p ((current-type-eval) τ))
       [(~?? _) #t]
       [(b1:base-type b2:base-type)
        (free-identifier=? #'b1.internal-name #'b2.internal-name)]
@@ -70,9 +70,9 @@
   ;; expect the given type and prototype to be compatible
   (define (prototype-expect p τ #:src [src p])
     (unless (prototype-compat? p τ)
-      (raise-syntax-error #f (format "expected type ~s, got ~s"
-                                     (syntax-e #'p)
-                                     (syntax-e #'τ))
+      (raise-syntax-error #f (format "expected type ~a, got ~a"
+                                     (type->string p)
+                                     (type->string τ))
                           src)))
   )
 
@@ -89,11 +89,7 @@
         (printf "~s : ~a\n\n"
                 form-
                 'τ/s)
-        ...
-        (printf "----\n~a\n->string: ~a\n"
-                'test
-                'test/s))]])
-
+        ...)]])
 
 ;; repl input
 (provide (rename-out [repl #%top-interaction]))
@@ -124,3 +120,18 @@
   [(_ . k) ≫
    --------
    [#:error "unsupported datum"]])
+
+
+;; dumb thing
+(provide (rename-out [plus +]))
+(define-typed-syntax plus
+  [(_ x y) ≫
+   #:with x* (attach-prototype #'x #'Int)
+   #:with y* (attach-prototype #'y #'Int)
+   [⊢ x* ≫ x- ⇒ _]
+   [⊢ y* ≫ y- ⇒ _]
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'Int
+                           #:src this-syntax)]
+   --------
+   [⊢ (+ x- y-) ⇒ Int]])
