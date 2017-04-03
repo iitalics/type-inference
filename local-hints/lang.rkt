@@ -49,6 +49,8 @@
   )
 
 
+
+;;; PROTOTYPES ;;;
 (begin-for-syntax
   ;; get the expected prototype for a syntax object
   (define (prototype-of stx)
@@ -71,6 +73,16 @@
                (syntax-e #'(τ_i ...)))]
       [(_ _) #f]))
 
+  ;; is the prototype a full type (contains no ?? holes)
+  (define prototype-full?
+    (syntax-parser
+      [~?? #f]
+      [p:ctor-type (andmap prototype-full?
+                           (syntax-e #'(p.arg ...)))]
+      [p:bind-type (andmap prototype-full?
+                           (syntax-e #'(p.arg ...)))]
+      [_ #t]))
+
   ;; expect the given type and prototype to be compatible
   (define (prototype-expect p τ #:src [src p])
     (unless (prototype-compat? p τ)
@@ -78,6 +90,48 @@
                                      (type->string p)
                                      (type->string τ))
                           src)))
+
+  ;; Coerce the prototype to a function with given arguments
+  ;; Returns a list, where the first element is the list of
+  ;;   argument >types<, and the second element is the return >prototype<.
+  ;; Raises an error if the prototype cannot be coerced completely (if
+  ;;   any ?? holes cannot be fulfilled).
+  (define (prototype-function-coerce proto args
+                                     #:src [src #f])
+    (define (error-missing-info)
+      (raise-syntax-error #f "some argument types are missing information and cannot be inferred" src))
+
+    (syntax-parse proto
+      [~?? (list (map (syntax-parser
+                        [#f (error-missing-info)]
+                        [τ #'τ])
+                      (syntax-e args))
+                 #'??)]
+
+      [(~→ arg_p ... ret_p)
+       (unless (= (stx-length #'(arg_p ...))
+                  (stx-length args))
+         (raise-syntax-error #f "wrong number of arguments expected to function" src))
+       (let ([arg-ts (map (lambda (p t)
+                            (cond
+                              [(not (syntax-e t))
+                               (if (prototype-full? p)
+                                   p
+                                   (error-missing-info))]
+                              [(prototype-compat? p t) t]
+                              [else
+                               (raise-syntax-error #f (format "argument has wrong type; expected ~a, got ~a"
+                                                              (type->string p)
+                                                              (type->string t))
+                                                   src)]))
+                          (syntax-e #'(arg_p ...))
+                          (syntax-e args))])
+         (list arg-ts #'ret_p))]
+
+      [_ (raise-syntax-error #f (format "unexpected function; expected ~a"
+                                        (type->string proto))
+                             src)]))
+
   )
 
 ;; toplevel parser
@@ -90,10 +144,10 @@
    #:with test/s (type->string #'test)
    --------
    [≻ (#%module-begin
-        (printf "~s : ~a\n"
-                form-
-                'τ/s)
-        ...)]])
+       (printf "~s : ~a\n"
+               form-
+               'τ/s)
+       ...)]])
 
 ;; repl input
 (provide (rename-out [repl #%top-interaction]))
@@ -149,16 +203,33 @@
    [#:error (format "type cannot be applied: ~a"
                     (type->string #'τ))]])
 
+;; abstraction
+(provide (rename-out [lam lambda]))
+
+(begin-for-syntax
+  (define-syntax-class id-maybe-ann
+    #:attributes (id given-τ)
+    (pattern id:id #:with given-τ #f)
+    (pattern [id:id (~datum :) given-τ:type])))
+
+(define-typed-syntax lam
+  [(_ (arg:id-maybe-ann ...) e) ≫
+   #:with (x ...) #'(arg.id ...)
+   #:with ((x_τ ...) e_p) (prototype-function-coerce (prototype-of this-syntax)
+                                                     #'(arg.given-τ ...)
+                                                     #:src this-syntax)
+   #:with e* (attach-prototype #'e #'e_p)
+   [[x ≫ x- : x_τ] ... ⊢ e* ≫ e- ⇒ e_τ]
+   --------
+   [⊢ (lambda (x- ...) e-) ⇒ (→ x_τ ... e_τ)]])
+
 
 ;; primitive ops
 (define-syntax provide-typed
   (syntax-parser
-    [(_ x:id τ)
-     #'(provide-typed [x x] τ)]
-    [(_ x:id (~datum :) τ)
-     #'(provide-typed [x x] τ)]
-    [(_ [x:id x-out:id] (~datum :) τ)
-     #'(provide-typed [x x-out] τ)]
+    [(_ x:id (~datum :) τ)             #'(provide-typed [x x] τ)]
+    [(_ x:id τ)                        #'(provide-typed [x x] τ)]
+    [(_ [x:id x-out:id] (~datum :) τ)  #'(provide-typed [x x-out] τ)]
     [(_ [x:id x-out:id] τ:type)
      #:with x-internal (generate-temporary #'x)
      #'(begin
@@ -169,17 +240,15 @@
                                     #:src this-syntax)]
             --------
             [⊢ x-out ⇒ τ]]
-           [(a (... ...)) ≫
+           [(a (... ...)) ≫ ; treat macro as application when in head position
             --------
             [≻ (app a (... ...))]])
          (provide (rename-out [x-internal x-out])))]))
 
 (provide-typed + : (→ Int Int Int))
 (provide-typed add1 : (→ Int Int))
-(provide-typed add2 : (→ Int Int))
 (provide-typed nat-rec-int : (→ Int (→ Int Int) Int Int))
 
-(define (add2 x) (+ 2 x))
 (define (nat-rec-int b f n)
   (if (zero? n)
       b
