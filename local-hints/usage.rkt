@@ -7,6 +7,7 @@
 (nat-rec-int 4 add1 5)     ; -> 9
 (lambda ([x : Int]) "hi")       ; #<proc> : (→ Int Str)
 (lambda ([x : Int]) x)          ; #<proc> : (→ Int Int)
+(:: (lambda (x) x) (→ Str Str)) ; #<proc> : (→ Str Str)
 
 (nat-rec-int 0 (lambda (x)
                  (+ x 2))

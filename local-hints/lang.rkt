@@ -46,6 +46,11 @@
                             (map ->dat (syntax-e #'(τ.arg ...))))]
         [x (syntax->datum #'x)]))
     (~a (->dat t)))
+
+  (define-syntax-class id-maybe-ann
+    #:attributes (id given-τ)
+    (pattern id:id #:with given-τ #f)
+    (pattern [id:id (~datum :) given-τ:type]))
   )
 
 
@@ -99,7 +104,7 @@
   (define (prototype-function-coerce proto args
                                      #:src [src #f])
     (define (error-missing-info)
-      (raise-syntax-error #f "some argument types are missing information and cannot be inferred" src))
+      (raise-syntax-error #f "missing information; cannot infer function type" src))
 
     (syntax-parse proto
       [~?? (list (map (syntax-parser
@@ -205,13 +210,6 @@
 
 ;; abstraction
 (provide (rename-out [lam lambda]))
-
-(begin-for-syntax
-  (define-syntax-class id-maybe-ann
-    #:attributes (id given-τ)
-    (pattern id:id #:with given-τ #f)
-    (pattern [id:id (~datum :) given-τ:type])))
-
 (define-typed-syntax lam
   [(_ (arg:id-maybe-ann ...) e) ≫
    #:with (x ...) #'(arg.id ...)
@@ -222,6 +220,19 @@
    [[x ≫ x- : x_τ] ... ⊢ e* ≫ e- ⇒ e_τ]
    --------
    [⊢ (lambda (x- ...) e-) ⇒ (→ x_τ ... e_τ)]])
+
+;; explicit annotation
+(provide (rename-out [annotate ::]))
+(define-typed-syntax annotate
+  [(_ e : τ) ≫ -------- [≻ (annotate e τ)]]
+  [(_ e:expr p:type) ≫
+   #:with e* (attach-prototype #'e #'p)
+   [⊢ e* ≫ e- ⇒ τ]
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'τ
+                           #:src this-syntax)]
+   --------
+   [⊢ e- ⇒ τ]])
 
 
 ;; primitive ops
