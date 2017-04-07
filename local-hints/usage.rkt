@@ -9,10 +9,12 @@
 (lambda ([x : Int]) x)          ; #<proc> : (→ Int Int)
 (:: (lambda (x) x) (→ Str Str)) ; #<proc> : (→ Str Str)
 
-(nat-rec-int 0 (lambda (x)
-                 (+ x 2))
-             5)            ; -> 10
+(nat-rec {Int}
+         0
+         (lambda (x) (+ x 2))
+         5)                ; -> 10
 
-(nat-rec-int 1 (lambda (x)
-                 (+ x x))
-             5)            ; -> 32
+(nat-rec {Int}
+         1
+         (lambda (x) (+ x x))
+         5)                ; -> 32

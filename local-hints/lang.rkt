@@ -13,6 +13,8 @@
 (define-base-type ??)
 
 (begin-for-syntax
+  ;;;; type utilities ;;;;
+
   (define-syntax-class base-type
     #:attributes (name internal-name)
     (pattern ((~literal #%plain-app) internal-name:id)
@@ -45,10 +47,25 @@
         [x (syntax->datum #'x)]))
     (~a (->dat t)))
 
+  ;;;; syntax parse utilities ;;;;
+
   (define-syntax-class id-maybe-ann
     #:attributes (id given-τ)
     (pattern id:id #:with given-τ #f)
     (pattern [id:id (~datum :) given-τ:type]))
+
+  (define-syntax-class is-curly
+    (pattern _ #:when (char=? (syntax-property this-syntax 'paren-shape)
+                              #\{)))
+
+  (define-syntax ~curly
+    (pattern-expander
+     (syntax-parser
+       [(_ pats ...)
+        #'(~and _:is-curly
+                (pats ...))]
+       [_:id
+        #'_:is-curly])))
   )
 
 
@@ -136,9 +153,30 @@
                                         (type->string proto))
                              src)]))
 
+  ;; Remove the given variables from a type, resulting in a prototype
+  (define (remove-vars vars τ
+                       #:cmp [cmp bound-identifier=?])
+    (syntax-parse τ
+      [x:id
+       #:when (member #'x vars cmp)
+       (syntax/loc τ ??)]
+      [(fst . rst)
+       #:with fst- (remove-vars vars #'fst #:cmp cmp)
+       #:with rst- (remove-vars vars #'rst #:cmp cmp)
+       (syntax/loc τ (fst- . rst-))]
+      [_ τ]))
+
+  ;; Unification algorithm
+  (define (unify τ1 τ2 cstrs
+                 #:cmp cmp
+                 #:vars vars
+                 #:src src)
+    (raise-syntax-error #f "unify unimplemented" src))
   )
 
-;; toplevel parser
+
+
+;;;; toplevel parser ;;;;
 (provide (rename-out [mod-beg #%module-begin]))
 (define-typed-syntax mod-beg
   [(_ form ...) ≫
@@ -151,7 +189,9 @@
                'τ/s)
        ...)]])
 
-;; repl input
+
+
+;;;; repl input ;;;;
 (provide (rename-out [repl #%top-interaction]))
 (define-typed-syntax repl
   [(_ . e) ≫
@@ -162,7 +202,9 @@
               e-
               'τ/s)]])
 
-;; datum syntax
+
+
+;;;; datum syntax ;;;;
 (provide (rename-out [dat #%datum]))
 (define-typed-syntax dat
   [(_ . k:integer) ≫
@@ -182,23 +224,65 @@
    --------
    [#:error "unsupported datum"]])
 
-;; application
+
+
+
+
+;;;; application ;;;;
 (provide (rename-out [app #%app]))
 (define-typed-syntax app
+
+  ;; application, with generalization annotated ;;
+  [(_ fun (~curly ~! X_τ ...) arg ...) ≫
+   [⊢ fun ≫ fun- ⇒ τ]
+   ; make sure it is generalized
+   #:do [(unless (∀? #'τ)
+           (raise-syntax-error #f
+                               (format "trying to instantiate non-generalized type: ~a"
+                                       (type->string #'τ))
+                               #'fun))]
+   #:with (~∀ (X ...) (~→ arg_τ ... ret_τ)) #'τ
+   ; check argument length
+   #:fail-unless (stx-length=? #'(X_τ ...)
+                               #'(X ...))
+   "wrong number of arguments to instantiation"
+   #:fail-unless (stx-length=? #'(arg ...)
+                               #'(arg_τ ...))
+   "wrong number of arguments to function"
+
+   ; eval types and substitute
+   #:with (X_τ- ...) (map (current-type-eval)
+                          (syntax-e #'(X_τ ...)))
+   #:with (arg_τ- ... ret_τ-)
+   (map (curry substs
+               (syntax-e #'(X_τ- ...))
+               (syntax-e #'(X ...)))
+        (syntax->list #'(arg_τ ... ret_τ)))
+
+   ; infer arguments
+   #:with (arg* ...) (map attach-prototype
+                          (syntax-e #'(arg ...))
+                          (syntax-e #'(arg_τ- ...)))
+   [⊢ arg* ≫ arg- ⇒ _] ...
+   --------
+   [⊢ (#%app fun- arg- ...) ⇒ ret_τ-]]
+
+
+  ;; plain application, without generalization ;;
   [(_ fun arg ...) ≫
    [⊢ fun ≫ fun- ⇒ (~→ arg_τ ... ret_τ)]
-   #:do [(unless (= (stx-length #'(arg ...))
-                    (stx-length #'(arg_τ ...)))
-           (raise-syntax-error #f "wrong number of arguments to function"
-                               #'fun))]
-
+   #:fail-unless (stx-length=? #'(arg ...)
+                               #'(arg_τ ...))
+   "wrong number of arguments to function"
+   ; infer arguments
    #:with (arg* ...) (map attach-prototype
                           (syntax-e #'(arg ...))
                           (syntax-e #'(arg_τ ...)))
-   [⊢ arg* ≫ arg- ⇒ arg_τ-] ...
+   [⊢ arg* ≫ arg- ⇒ _] ...
    --------
    [⊢ (#%app fun- arg- ...) ⇒ ret_τ]]
 
+  ;; invalid application ;;
   [(_ fun arg ...) ≫
    [⊢ fun ≫ fun- ⇒ τ]
    --------
@@ -247,7 +331,7 @@
                                     #'τ
                                     #:src this-syntax)]
             --------
-            [⊢ x-out ⇒ τ]]
+            [⊢ x ⇒ τ]]
            [(a (... ...)) ≫ ; treat macro as application when in head position
             --------
             [≻ (app a (... ...))]])
@@ -255,9 +339,9 @@
 
 (provide-typed + : (→ Int Int Int))
 (provide-typed add1 : (→ Int Int))
-(provide-typed nat-rec-int : (→ Int (→ Int Int) Int Int))
+(provide-typed [nat-rec nat-rec] : (∀ (α) (→ α (→ α α) Int α)))
 
-(define (nat-rec-int b f n)
+(define (nat-rec b f n)
   (if (zero? n)
       b
-      (f (nat-rec-int b f (sub1 n)))))
+      (f (nat-rec b f (sub1 n)))))
