@@ -89,10 +89,6 @@
     (syntax-parse (list p ((current-type-eval) τ))
       [(~?? _) #t]
       [(b1:base-type b2:base-type)
-       (printf "free-id=? ~a ~a ~a\n"
-               #'b1.internal-name
-               #'b2.internal-name
-               (free-identifier=? #'b1.internal-name #'b2.internal-name))
        (free-identifier=? #'b1.internal-name #'b2.internal-name)]
       [((~→ p_i ...) (~→ τ_i ...))
        (and (stx-length=? #'(p_i ...) #'(τ_i ...))
@@ -167,15 +163,10 @@
   ;; Remove the given variables from a type, resulting in a prototype
   (define (remove-vars vars τ
                        #:cmp [cmp bound-identifier=?])
-    (syntax-parse τ
-      [x:id
-       #:when (member #'x vars cmp)
-       ((current-type-eval) (syntax/loc τ ??))]
-      [(fst . rst)
-       #:with fst- (remove-vars vars #'fst #:cmp cmp)
-       #:with rst- (remove-vars vars #'rst #:cmp cmp)
-       (syntax/loc τ (fst- . rst-))]
-      [_ τ]))
+    (substs (map (lambda (_) ((current-type-eval) #'??)) vars)
+            vars
+            τ
+            cmp))
 
   ;; unification algorithm
   (define (unify τ1 τ2 cstrs
@@ -324,12 +315,14 @@
                    #:src src))
           '()
           (syntax-e #'(arg_τ ...))
-          (syntax-e #'(arg_τ* ...)))
+          (syntax-e #'(arg_τ* ...))
+          (syntax-e #'(arg ...)))
    #:do [(unless (stx-length=? #'(Y ...) #'(X ...))
            (raise-syntax-error #f
                                "not all type variables were able to be inferred"
                                this-syntax))]
 
+   ; substitute variables in return type
    #:with ret_τ- (substs #'(Y ...)
                            #'(τ ...)
                            #'ret_τ)
