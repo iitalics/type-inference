@@ -303,7 +303,7 @@
    [⊢ (lambda (x- ...) e-) ⇒ (→ x_τ ... e_τ)]])
 
 ;; explicit annotation
-(provide (rename-out [annotate ::]))
+(provide (rename-out [annotate ann]))
 (define-typed-syntax annotate
   [(_ e : τ) ≫ -------- [≻ (annotate e τ)]]
   [(_ e:expr p:type) ≫
