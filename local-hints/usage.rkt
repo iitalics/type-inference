@@ -9,7 +9,6 @@
 (lambda ([x : Int]) x)          ; #<proc> : (→ Int Int)
 (ann (lambda (x) x) : (→ Str Str)) ; #<proc> : (→ Str Str)
 
-
-(nat-rec 0
-         (lambda ([x : Int]) (+ x 2))
-         5)                ; -> 10
+(nat-rec 1
+         (lambda ([x : Int]) (+ x x))
+         5)                ; -> 32 : Int

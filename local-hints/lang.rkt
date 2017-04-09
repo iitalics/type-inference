@@ -173,20 +173,21 @@
                  #:cmp cmp
                  #:vars vars
                  #:src src)
-    (define (error-incompat)
-      (raise-syntax-error #f
-                          (format "incompatible types: ~a and ~a"
-                                  (type->string init-τ1)
-                                  (type->string init-τ2))
-                          src))
+    (define (error-incompat cstrs)
+      (let ([Xs (map car cstrs)]
+            [τs (map cdr cstrs)])
+        (raise-syntax-error #f
+                            (format "incompatible types: ~a and ~a"
+                                    (type->string (substs τs Xs init-τ1))
+                                    (type->string (substs τs Xs init-τ2)))
+                            src)))
 
-    (define (sub0 x cstrs)
-      (cond
-        [(and (symbol? (syntax-e x))
-              (member x vars cmp))
-         (let ([τ (assoc x cstrs cmp)])
-           (if τ (sub0 τ cstrs) x))]
-        [else x]))
+    (define (sub0 e cstrs)
+      (syntax-parse e
+        [x:id
+         (let ([τ (assoc #'x cstrs cmp)])
+           (if τ (sub0 (cdr τ) cstrs) e))]
+        [_ e]))
 
     (define (occurs? x τ)
       (syntax-parse τ
@@ -196,14 +197,7 @@
         [() #f]))
 
     (define (Ω τ1 τ2 cstrs)
-      (printf "Ω(τ1 = ~a,  τ2 = ~a)\n  vars = ~s, cstrs = ~s\n"
-              (type->string τ1)
-              (type->string τ2)
-              (map syntax->datum vars)
-              (map (lambda (pr)
-                     (cons (syntax-e (car pr))
-                           (type->string (cdr pr))))
-                   cstrs))
+      ;(printf "Ω(~a, ~a)\n" (type->string τ1) (type->string τ2))
       (syntax-parse (list (sub0 τ1 cstrs)
                           (sub0 τ2 cstrs))
         [(x:id y:id) #:when (and (member #'x vars cmp)
@@ -224,17 +218,11 @@
         [(a:id b:id) #:when (free-identifier=? #'a #'b)
          cstrs]
 
-        [(() ())
-         cstrs]
-
         [((a . b) (c . d))
          (Ω #'b #'d (Ω #'a #'c cstrs))]
 
-        [(t u)
-         (printf "failing on: ~a, ~a"
-                 (syntax->datum #'t)
-                 (syntax->datum #'u))
-         (error-incompat)]))
+        [(() ()) cstrs]
+        [(t u) (error-incompat cstrs)]))
     (Ω init-τ1 init-τ2 cstrs))
   )
 
@@ -374,7 +362,7 @@
    [⊢ arg* ≫ arg- ⇒ arg_τ*] ...
 
    ; unify to determine variables
-   #:with unify-res
+   #:with ((Y . τ) ...)
    (foldl (lambda (τ1 τ2 src cstrs)
             (unify τ1 τ2 cstrs
                    #:cmp bound-identifier=?
@@ -384,17 +372,16 @@
           (syntax-e #'(arg_τ ...))
           (syntax-e #'(arg_τ* ...))
           (syntax-e #'(arg ...)))
-   #:do [(printf "unify finished.\n")]
-   #:with ((Y . τ) ...) #'unify-res
    #:do [(unless (stx-length=? #'(Y ...) #'(X ...))
            (raise-syntax-error #f
                                "not all type variables were able to be inferred"
                                this-syntax))]
 
    ; substitute variables in return type
-   #:with ret_τ- (substs #'(Y ...)
-                           #'(τ ...)
-                           #'ret_τ)
+   #:with ret_τ- (substs #'(τ ...)
+                         #'(Y ...)
+                         #'ret_τ)
+
    #:do [(prototype-expect (prototype-of this-syntax)
                            #'ret_τ-
                            #:src this-syntax)]
