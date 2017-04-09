@@ -10,14 +10,6 @@
 (ann (lambda (x) x) : (→ Str Str)) ; #<proc> : (→ Str Str)
 
 
-(nat-rec {Int}
-         0
-         (lambda (x) (+ x 2))
+(nat-rec 0
+         (lambda ([x : Int]) (+ x 2))
          5)                ; -> 10
-
-(nat-rec {Int}
-         1
-         (lambda (x) (+ x x))
-         5)                ; -> 32
-
-(with-rand 10 (lambda (k) "hello")) ; -> "hello" : Str

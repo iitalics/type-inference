@@ -169,12 +169,79 @@
             cmp))
 
   ;; unification algorithm
-  (define (unify τ1 τ2 cstrs
+  (define (unify init-τ1 init-τ2 cstrs
                  #:cmp cmp
                  #:vars vars
                  #:src src)
-    (raise-syntax-error #f "unify unimplemented" src))
+    (define (error-incompat)
+      (raise-syntax-error #f
+                          (format "incompatible types: ~a and ~a"
+                                  (type->string init-τ1)
+                                  (type->string init-τ2))
+                          src))
+
+    (define (sub0 x cstrs)
+      (cond
+        [(and (symbol? (syntax-e x))
+              (member x vars cmp))
+         (let ([τ (assoc x cstrs cmp)])
+           (if τ (sub0 τ cstrs) x))]
+        [else x]))
+
+    (define (occurs? x τ)
+      (syntax-parse τ
+        [y:id (cmp x #'y)]
+        [(a . b) (or (occurs? x #'a)
+                     (occurs? x #'b))]
+        [() #f]))
+
+    (define (Ω τ1 τ2 cstrs)
+      (printf "Ω(τ1 = ~a,  τ2 = ~a)\n  vars = ~s, cstrs = ~s\n"
+              (type->string τ1)
+              (type->string τ2)
+              (map syntax->datum vars)
+              (map (lambda (pr)
+                     (cons (syntax-e (car pr))
+                           (type->string (cdr pr))))
+                   cstrs))
+      (syntax-parse (list (sub0 τ1 cstrs)
+                          (sub0 τ2 cstrs))
+        [(x:id y:id) #:when (and (member #'x vars cmp)
+                                 (cmp #'x #'y))
+         cstrs]
+
+        [(~or (x:id τ)
+              (τ x:id))
+         #:when (member #'x vars cmp)
+         (when (occurs? #'x #'τ)
+           (raise-syntax-error #f
+                               (format "occurs check failed; infinite type ~a ~~ ~a"
+                                       (type->string #'x)
+                                       (type->string #'τ))
+                               src))
+         (cons (cons #'x #'τ) cstrs)]
+
+        [(a:id b:id) #:when (free-identifier=? #'a #'b)
+         cstrs]
+
+        [(() ())
+         cstrs]
+
+        [((a . b) (c . d))
+         (Ω #'b #'d (Ω #'a #'c cstrs))]
+
+        [(t u)
+         (printf "failing on: ~a, ~a"
+                 (syntax->datum #'t)
+                 (syntax->datum #'u))
+         (error-incompat)]))
+    (Ω init-τ1 init-τ2 cstrs))
   )
+
+
+
+
+
 
 
 
@@ -307,7 +374,7 @@
    [⊢ arg* ≫ arg- ⇒ arg_τ*] ...
 
    ; unify to determine variables
-   #:with [(Y . τ) ...]
+   #:with unify-res
    (foldl (lambda (τ1 τ2 src cstrs)
             (unify τ1 τ2 cstrs
                    #:cmp bound-identifier=?
@@ -317,6 +384,8 @@
           (syntax-e #'(arg_τ ...))
           (syntax-e #'(arg_τ* ...))
           (syntax-e #'(arg ...)))
+   #:do [(printf "unify finished.\n")]
+   #:with ((Y . τ) ...) #'unify-res
    #:do [(unless (stx-length=? #'(Y ...) #'(X ...))
            (raise-syntax-error #f
                                "not all type variables were able to be inferred"
