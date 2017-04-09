@@ -51,8 +51,11 @@
 
   (define-syntax-class id-maybe-ann
     #:attributes (id given-τ)
-    (pattern id:id #:with given-τ #f)
-    (pattern [id:id (~datum :) given-τ:type]))
+    (pattern id:id
+             #:with given-τ #f)
+    (pattern [id:id (~datum :) τ:type]
+             #:with given-τ ((current-type-eval)
+                             (datum->syntax #'_ (syntax->datum #'τ)))))
 
   (define-syntax-class is-curly
     (pattern _ #:when (char=? (syntax-property this-syntax 'paren-shape)
@@ -86,13 +89,21 @@
     (syntax-parse (list p ((current-type-eval) τ))
       [(~?? _) #t]
       [(b1:base-type b2:base-type)
+       (printf "free-id=? ~a ~a ~a\n"
+               #'b1.internal-name
+               #'b2.internal-name
+               (free-identifier=? #'b1.internal-name #'b2.internal-name))
        (free-identifier=? #'b1.internal-name #'b2.internal-name)]
       [((~→ p_i ...) (~→ τ_i ...))
        (and (stx-length=? #'(p_i ...) #'(τ_i ...))
             (andmap prototype-compat?
                     (syntax-e #'(p_i ...))
                     (syntax-e #'(τ_i ...))))]
-      [(_ _) #f]))
+      [(_ _)
+       (printf "weird types in compat? :\n  ~s\n  ~s\n"
+               (syntax->datum p)
+               (syntax->datum τ))
+       #f]))
 
   ;; is the prototype a full type (contains no ?? holes)
   (define prototype-full?
@@ -142,8 +153,8 @@
                               [(prototype-compat? p t) t]
                               [else
                                (raise-syntax-error #f (format "argument has wrong type; expected ~a, got ~a"
-                                                              (type->string p)
-                                                              (type->string t))
+                                                              (syntax->datum p)
+                                                              (syntax->datum t))
                                                    src)]))
                           (syntax-e #'(arg_p ...))
                           (syntax-e args))])
@@ -159,14 +170,14 @@
     (syntax-parse τ
       [x:id
        #:when (member #'x vars cmp)
-       (syntax/loc τ ??)]
+       ((current-type-eval) (syntax/loc τ ??))]
       [(fst . rst)
        #:with fst- (remove-vars vars #'fst #:cmp cmp)
        #:with rst- (remove-vars vars #'rst #:cmp cmp)
        (syntax/loc τ (fst- . rst-))]
       [_ τ]))
 
-  ;; Unification algorithm
+  ;; unification algorithm
   (define (unify τ1 τ2 cstrs
                  #:cmp cmp
                  #:vars vars
@@ -232,17 +243,12 @@
 (provide (rename-out [app #%app]))
 (define-typed-syntax app
 
+  ;;
   ;; application, with generalization annotated ;;
+  ;;
   [(_ fun (~curly ~! X_τ ...) arg ...) ≫
-   [⊢ fun ≫ fun- ⇒ τ]
-   ; make sure it is generalized
-   #:do [(unless (∀? #'τ)
-           (raise-syntax-error #f
-                               (format "trying to instantiate non-generalized type: ~a"
-                                       (type->string #'τ))
-                               #'fun))]
-   #:with (~∀ (X ...) (~→ arg_τ ... ret_τ)) #'τ
-   ; check argument length
+   [⊢ fun ≫ fun- ⇒ (~∀ (X ...) (~→ arg_τ ... ret_τ))]
+   ; check argument lengths
    #:fail-unless (stx-length=? #'(X_τ ...)
                                #'(X ...))
    "wrong number of arguments to instantiation"
@@ -253,22 +259,26 @@
    ; eval types and substitute
    #:with (X_τ- ...) (map (current-type-eval)
                           (syntax-e #'(X_τ ...)))
-   #:with (arg_τ- ... ret_τ-)
-   (map (curry substs
-               (syntax-e #'(X_τ- ...))
-               (syntax-e #'(X ...)))
-        (syntax->list #'(arg_τ ... ret_τ)))
+   #:with (arg_τ- ... ret_τ-) (map (curry substs
+                                          (syntax-e #'(X_τ- ...))
+                                          (syntax-e #'(X ...)))
+                                   (syntax->list #'(arg_τ ... ret_τ)))
 
-   ; infer arguments
+   ; typecheck arguments
    #:with (arg* ...) (map attach-prototype
                           (syntax-e #'(arg ...))
                           (syntax-e #'(arg_τ- ...)))
    [⊢ arg* ≫ arg- ⇒ _] ...
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'ret_τ-
+                           #:src this-syntax)]
    --------
    [⊢ (#%app fun- arg- ...) ⇒ ret_τ-]]
 
 
+  ;;
   ;; plain application, without generalization ;;
+  ;;
   [(_ fun arg ...) ≫
    [⊢ fun ≫ fun- ⇒ (~→ arg_τ ... ret_τ)]
    #:fail-unless (stx-length=? #'(arg ...)
@@ -279,10 +289,60 @@
                           (syntax-e #'(arg ...))
                           (syntax-e #'(arg_τ ...)))
    [⊢ arg* ≫ arg- ⇒ _] ...
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'ret_τ
+                           #:src this-syntax)]
    --------
    [⊢ (#%app fun- arg- ...) ⇒ ret_τ]]
 
+
+  ;;
+  ;; application, generalization inferred ;;
+  ;;
+  [(_ fun arg ...) ≫
+   [⊢ fun ≫ fun- ⇒ (~∀ (X ...) (~→ arg_τ ... ret_τ))]
+   #:fail-unless (stx-length=? #'(arg ...)
+                               #'(arg_τ ...))
+   "wrong number of arguments to function"
+   ; remove variables from arguments
+   #:with (arg_p ... ret_p) (map (curry remove-vars
+                                        (syntax-e #'(X ...)))
+                                 (syntax->list #'(arg_τ ... ret_τ)))
+
+   ; infer arguments
+   #:with (arg* ...) (map attach-prototype
+                          (syntax-e #'(arg ...))
+                          (syntax-e #'(arg_p ...)))
+   [⊢ arg* ≫ arg- ⇒ arg_τ*] ...
+
+   ; unify to determine variables
+   #:with [(Y . τ) ...]
+   (foldl (lambda (τ1 τ2 src cstrs)
+            (unify τ1 τ2 cstrs
+                   #:cmp bound-identifier=?
+                   #:vars (syntax-e #'(X ...))
+                   #:src src))
+          '()
+          (syntax-e #'(arg_τ ...))
+          (syntax-e #'(arg_τ* ...)))
+   #:do [(unless (stx-length=? #'(Y ...) #'(X ...))
+           (raise-syntax-error #f
+                               "not all type variables were able to be inferred"
+                               this-syntax))]
+
+   #:with ret_τ- (substs #'(Y ...)
+                           #'(τ ...)
+                           #'ret_τ)
+   #:do [(prototype-expect (prototype-of this-syntax)
+                           #'ret_τ-
+                           #:src this-syntax)]
+   --------
+   [⊢ (#%app fun- arg- ...) ⇒ ret_τ-]]
+
+
+  ;;
   ;; invalid application ;;
+  ;;
   [(_ fun arg ...) ≫
    [⊢ fun ≫ fun- ⇒ τ]
    --------
@@ -339,9 +399,13 @@
 
 (provide-typed + : (→ Int Int Int))
 (provide-typed add1 : (→ Int Int))
-(provide-typed [nat-rec nat-rec] : (∀ (α) (→ α (→ α α) Int α)))
+(provide-typed nat-rec : (∀ (α) (α (→ α α) Int . → . α)))
+(provide-typed with-rand : (∀ (α) (→ Int (→ Int α) α)))
 
 (define (nat-rec b f n)
   (if (zero? n)
       b
       (f (nat-rec b f (sub1 n)))))
+
+(define (with-rand n f)
+  (f (random n)))
