@@ -33,3 +33,9 @@
 #;(nat-rec 1
            (lambda (x) (+ x x))
            5)                ; -> 32 : Int
+
+
+; BUGS:
+; (ann (lambda (x) x) : (→ Int Str))
+; This happens because declared variables
+;   aren't allowed to have any logic.
